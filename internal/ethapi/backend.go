@@ -132,6 +132,11 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 			Version:   "1.0",
 			Service:   NewPrivateAccountAPI(apiBackend, nonceLock),
 			Public:    false,
+		}, {
+			Namespace: "lin",
+			Version:   "1.0",
+			Service:   NewMarlinAPI(apiBackend),
+			Public:    false,
 		},
 	}
 }
