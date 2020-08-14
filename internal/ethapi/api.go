@@ -1998,3 +1998,12 @@ func toHexSlice(b [][]byte) []string {
 	}
 	return r
 }
+
+type PublicMarlinAPI struct {
+	b Backend
+}
+
+// NewMarlinAPI creates a new tx service to support marlin nodes
+func NewMarlinAPI(b Backend) *PublicTxPoolAPI {
+	return &PublicMarlinAPI{b}
+}
