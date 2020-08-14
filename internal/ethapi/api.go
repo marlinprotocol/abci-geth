@@ -1943,3 +1943,12 @@ func checkTxFee(gasPrice *big.Int, gas uint64, cap float64) error {
 	}
 	return nil
 }
+
+type PublicMarlinAPI struct {
+	b Backend
+}
+
+// NewMarlinAPI creates a new tx service to support marlin nodes
+func NewMarlinAPI(b Backend) *PublicTxPoolAPI {
+	return &PublicMarlinAPI{b}
+}
