@@ -136,7 +136,7 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 			Namespace: "lin",
 			Version:   "1.0",
 			Service:   NewMarlinAPI(apiBackend),
-			Public:    false,
+			Public:    true,
 		},
 	}
 }
