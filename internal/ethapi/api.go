@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -2064,6 +2065,77 @@ type PublicMarlinAPI struct {
 }
 
 // NewMarlinAPI creates a new tx service to support marlin nodes
-func NewMarlinAPI(b Backend) *PublicTxPoolAPI {
+func NewMarlinAPI(b Backend) *PublicMarlinAPI {
 	return &PublicMarlinAPI{b}
+}
+
+type chainBackend interface {
+	ChainHeaderReader() consensus.ChainHeaderReader
+}
+
+type newBlockData struct {
+	Block *types.Block
+	TD    *big.Int
+}
+
+func (api *PublicMarlinAPI) SpamCheckBlock(ctx context.Context, hexBlock string) bool {
+	rlpBlock := common.FromHex(hexBlock)
+
+	var request newBlockData
+	if err := rlp.DecodeBytes(rlpBlock, &request); err != nil {
+		// Invalid encoding
+		return false
+	}
+	if hash := types.CalcUncleHash(request.Block.Uncles()); hash != request.Block.UncleHash() {
+		// Invalid uncles
+		return false
+	}
+	if hash := types.DeriveSha(request.Block.Transactions()); hash != request.Block.TxHash() {
+		// Invalid body
+		return false
+	}
+	if err := request.Block.Header().SanityCheck(); err != nil {
+		// Invalid sanity checks, mainly size of blocknumber, difficulty, extradata
+		// TODO: Is this needed if we are relying on PoW scarcity?
+		return false
+	}
+
+	backend := api.b
+	block := request.Block
+
+	// Check if block is known
+	if res, _ := backend.HeaderByHash(ctx, block.Hash()); res != nil {
+		// If block is known, assume it is verified already
+		return true
+	}
+	// Check if parent is unknown
+	parent, _ := backend.HeaderByHash(ctx, block.ParentHash())
+	if parent == nil {
+		// Cannot check without parent, take conservative approach and return false
+		return false
+	}
+
+	// Check extradata size
+	// TODO: Is this needed if we are relying on PoW scarcity?
+	if uint64(len(block.Extra())) > params.MaximumExtraDataSize {
+		return false
+	}
+	// Verify the header's timestamp
+	if block.Time() > uint64(time.Now().Add(15 * time.Second).Unix()) {
+		return false
+	}
+	if block.Time() <= parent.Time {
+		return false
+	}
+	// Verify the block's difficulty based on its timestamp and parent's difficulty
+	expected := ethash.CalcDifficulty(backend.ChainConfig(), block.Time(), parent)
+	if expected.Cmp(block.Difficulty()) != 0 {
+		return false
+	}
+
+	// Verify the engine specific seal securing the block
+	if err := backend.Engine().VerifySeal(backend.(chainBackend).ChainHeaderReader(), block.Header()); err != nil {
+		return false
+	}
+	return true
 }
