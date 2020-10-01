@@ -46,6 +46,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/tyler-smith/go-bip39"
 )
 
@@ -2069,8 +2070,9 @@ func NewMarlinAPI(b Backend) *PublicMarlinAPI {
 	return &PublicMarlinAPI{b}
 }
 
-type chainBackend interface {
+type ethBackend interface {
 	ChainHeaderReader() consensus.ChainHeaderReader
+	Engine() consensus.Engine
 }
 
 type newBlockData struct {
@@ -2078,64 +2080,77 @@ type newBlockData struct {
 	TD    *big.Int
 }
 
-func (api *PublicMarlinAPI) SpamCheckBlock(ctx context.Context, hexBlock string) bool {
+type AnalyzeBlockResult struct {
+	Hash common.Hash				`json:"hash"`
+	HeaderOffset uint64	 			`json:"headerOffset"`
+	HeaderLength uint64	 			`json:"headerLength"`
+	Coinbase common.Address			`json:"coinbase"`
+}
+
+func (api *PublicMarlinAPI) AnalyzeBlock(ctx context.Context, hexBlock string) (*AnalyzeBlockResult, error) {
 	rlpBlock := common.FromHex(hexBlock)
 
 	var request newBlockData
 	if err := rlp.DecodeBytes(rlpBlock, &request); err != nil {
 		// Invalid encoding
-		return false
+		return nil, err
 	}
+
+	if request.Block.Time() + 300 < uint64(time.Now().Unix()) {
+		// Block is older than 5 min
+		return nil, fmt.Errorf("too old")
+	}
+
 	if hash := types.CalcUncleHash(request.Block.Uncles()); hash != request.Block.UncleHash() {
 		// Invalid uncles
-		return false
+		return nil, fmt.Errorf("invalid uncles")
 	}
-	if hash := types.DeriveSha(request.Block.Transactions()); hash != request.Block.TxHash() {
+	if hash := types.DeriveSha(request.Block.Transactions(), new(trie.Trie)); hash != request.Block.TxHash() {
 		// Invalid body
-		return false
+		return nil, fmt.Errorf("invalid body")
 	}
 	if err := request.Block.Header().SanityCheck(); err != nil {
 		// Invalid sanity checks, mainly size of blocknumber, difficulty, extradata
 		// TODO: Is this needed if we are relying on PoW scarcity?
-		return false
+		return nil, fmt.Errorf("failed sanity checks")
 	}
 
-	backend := api.b
+	backend := api.b.(ethBackend)
 	block := request.Block
 
-	// Check if block is known
-	if res, _ := backend.HeaderByHash(ctx, block.Hash()); res != nil {
-		// If block is known, assume it is verified already
-		return true
-	}
-	// Check if parent is unknown
-	parent, _ := backend.HeaderByHash(ctx, block.ParentHash())
-	if parent == nil {
-		// Cannot check without parent, take conservative approach and return false
-		return false
+	// Verify header
+	if err := backend.Engine().VerifyHeader(backend.ChainHeaderReader(), block.Header(), true); err != nil {
+		return nil, fmt.Errorf("verification failure")
 	}
 
-	// Check extradata size
-	// TODO: Is this needed if we are relying on PoW scarcity?
-	if uint64(len(block.Extra())) > params.MaximumExtraDataSize {
-		return false
+	var headerOffset uint64 = 0
+	if rlpBlock[headerOffset] < 0xf8 {
+		headerOffset += 1
+	} else {
+		headerOffset += 1 + (uint64(rlpBlock[headerOffset]) - 0xf7)
 	}
-	// Verify the header's timestamp
-	if block.Time() > uint64(time.Now().Add(15 * time.Second).Unix()) {
-		return false
-	}
-	if block.Time() <= parent.Time {
-		return false
-	}
-	// Verify the block's difficulty based on its timestamp and parent's difficulty
-	expected := ethash.CalcDifficulty(backend.ChainConfig(), block.Time(), parent)
-	if expected.Cmp(block.Difficulty()) != 0 {
-		return false
+	if rlpBlock[headerOffset] < 0xf8 {
+		headerOffset += 1
+	} else {
+		headerOffset += 1 + (uint64(rlpBlock[headerOffset]) - 0xf7)
 	}
 
-	// Verify the engine specific seal securing the block
-	if err := backend.Engine().VerifySeal(backend.(chainBackend).ChainHeaderReader(), block.Header()); err != nil {
-		return false
+	var headerLength uint64 = 0
+	if rlpBlock[headerOffset] < 0xf8 {
+		headerLength = uint64(rlpBlock[headerOffset]) - 0xc0 + 1
+	} else {
+		for i := uint64(0); i < uint64(rlpBlock[headerOffset]) - 0xf7; i++ {
+			headerLength = (headerLength << 8) + uint64(rlpBlock[headerOffset+i+1])
+		}
+		headerLength += uint64(rlpBlock[headerOffset]) - 0xf7 + 1
 	}
-	return true
+
+	retval := &AnalyzeBlockResult{
+		block.Hash(),
+		headerOffset,
+		headerLength,
+		block.Coinbase(),
+	}
+
+	return retval, nil
 }
