@@ -1,0 +1,23 @@
+name: Test matrix
+on: workflow_dispatch
+jobs:
+  build:
+    name: Build
+    strategy:
+      matrix:
+        os: ['ubuntu-18.04']
+        build_type: [Release]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: recursive
+    - name: Make
+      run: make geth
+    - uses: GoogleCloudPlatform/github-actions/setup-gcloud@master
+      with: 
+        service_account_key: ${{ secrets.GCS_SA_KEY }}
+        export_default_credentials: true
+    - name: Deploy
+      run: |
+       gsutil -h "Cache-Control:no-cache, max-age=0" cp build/bin/geth gs://marlin-artifacts/bin/geth_${{ matrix.os }}_${{ matrix.build_type }}
