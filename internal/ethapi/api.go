@@ -2112,7 +2112,7 @@ func (api *PublicMarlinAPI) AnalyzeBlock(ctx context.Context, hexBlock string) (
 	if err := request.Block.Header().SanityCheck(); err != nil {
 		// Invalid sanity checks, mainly size of blocknumber, difficulty, extradata
 		// TODO: Is this needed if we are relying on PoW scarcity?
-		return nil, fmt.Errorf("failed sanity checks")
+		return nil, err
 	}
 
 	backend := api.b.(ethBackend)
@@ -2120,7 +2120,8 @@ func (api *PublicMarlinAPI) AnalyzeBlock(ctx context.Context, hexBlock string) (
 
 	// Verify header
 	if err := backend.Engine().VerifyHeader(backend.ChainHeaderReader(), block.Header(), true); err != nil {
-		return nil, fmt.Errorf("verification failure")
+		// fmt.Printf("Verification failure: %s, %s\n", block.Hash().Hex(), block.Header().ParentHash.Hex())
+		return nil, err
 	}
 
 	var headerOffset uint64 = 0
