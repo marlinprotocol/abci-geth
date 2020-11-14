@@ -2005,7 +2005,7 @@ func (api *PublicMarlinAPI) AnalyzeBlock(ctx context.Context, hexBlock string) (
 
 	// Verify header
 	if err := backend.Engine().VerifyHeader(backend.ChainHeaderReader(), block.Header(), true); err != nil {
-		// fmt.Printf("Verification failure: %s, %s\n", block.Hash().Hex(), block.Header().ParentHash.Hex())
+		fmt.Printf("Header verification failure: %s, %s\n", block.Hash().Hex(), block.Header().ParentHash.Hex())
 		return nil, err
 	}
 
